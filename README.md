@@ -2,6 +2,12 @@
 
 Aplicação web leve para confecção, em português, com interface em tons de jeans. Frontend estático no GitHub Pages; autenticação, autorização e dados no Supabase PostgreSQL.
 
+**Site:** https://boggeapp.github.io/kanban/
+
+Em 18/09/2026, o esquema foi aplicado ao projeto Supabase informado, o primeiro PCP foi convidado e ativado, e as URLs de autenticação foram configuradas para o site publicado. Os testes e o deploy no GitHub Actions passaram. O destinatário deve concluir a definição da senha pelo convite.
+
+**Pendência operacional:** configurar SMTP próprio no Supabase antes do cadastro geral da equipe. O SMTP padrão está habilitado e só entrega mensagens a endereços da equipe do projeto Supabase; não é um serviço de e-mail de produção. Configure em Authentication → Emails → SMTP Settings usando um provedor da empresa. Nunca publique essas credenciais. [Documentação oficial](https://supabase.com/docs/guides/auth/auth-smtp).
+
 ## Executar
 
 Node 24 e pnpm 11.19.0:
@@ -20,7 +26,7 @@ Abra `http://localhost:5173/kanban/`. A demonstração usa dados fictícios em m
 1. Abra o projeto `glgvvywkhelpydodxajw` e execute `supabase/migrations/202609180001_kanban.sql` no SQL Editor. Execute uma única vez: é uma migração inicial transacional, não um script para recriar tabelas.
 2. Em Authentication → URL Configuration, configure Site URL e Redirect URL como `https://boggeapp.github.io/kanban/`. Para desenvolvimento, adicione `http://localhost:5173/kanban/` e/ou `http://127.0.0.1:5173/kanban/`.
 3. Mantenha confirmação de e-mail habilitada. Configure SMTP de produção para entrega de confirmação e recuperação de senha.
-4. O primeiro administrador cria a própria conta pela aplicação e confirma o e-mail. Um administrador do projeto executa `supabase/bootstrap-admin.sql`, substituindo somente o e-mail indicado. Não envie senhas ou chaves secretas pelo chat nem as coloque no repositório.
+4. Em uma instalação nova, o primeiro administrador cria e confirma a própria conta ou recebe um convite pelo painel Supabase. Um administrador do projeto executa `supabase/bootstrap-admin.sql`, substituindo somente o e-mail indicado. O convite abre a tela de definição de senha. Não envie senhas ou chaves secretas pelo chat nem as coloque no repositório.
 5. Demais usuários criam suas contas; o PCP aprova e atribui perfis na tela **Usuários**. O cadastro nunca aceita um perfil administrativo enviado pelo navegador.
 
 A chave `sb_publishable_...` usada na aplicação é pública por definição e não concede administração. Nenhuma chave `service_role`, senha de banco ou token de gerenciamento é necessária no frontend. URLs/chaves públicas podem ser sobrescritas pelas variáveis de `.env.example`.
