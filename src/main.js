@@ -1,11 +1,11 @@
 import './style.css';
 import { createIcons, LayoutDashboard, Plus, Search, ArrowRight, Scissors, LogOut, Users, X, ChevronRight, RefreshCw, ClipboardList, History, Check, Download, Package, Layers, LockKeyhole, ArrowLeft } from 'lucide';
-import {supabase,result,allRows} from './api.js';
+import {supabase,result,allRows,passwordSetupRequested} from './api.js';
 import {SIZES,STAGES,LABELS,ROLES,LOSS_STAGES,REPAIR_STAGES,emptyGrid,total,today,canOperate,canPlan,fieldsFor,validateGrid,validateProduction} from './domain.js';
 const icons={LayoutDashboard,Plus,Search,ArrowRight,Scissors,LogOut,Users,X,ChevronRight,RefreshCw,ClipboardList,History,Check,Download,Package,Layers,LockKeyhole,ArrowLeft};
 const app=document.querySelector('#app');
 const state={user:null,profile:null,profiles:[],plans:[],records:[],query:'',filter:'all',view:'board',demo:false,loading:false};
-let authView='login', authBusy=false, recovery=false, refreshTimer;
+let authView='login', authBusy=false, recovery=passwordSetupRequested, refreshTimer;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon=n=>`<i data-lucide="${n}" aria-hidden="true"></i>`;
 const fmt=n=>Number(n).toLocaleString('pt-BR');
@@ -136,4 +136,4 @@ function renderUsers(){
 }
 supabase.auth.onAuthStateChange((event)=>{if(event==='PASSWORD_RECOVERY'){recovery=true;renderAuth();}else if(event==='SIGNED_OUT'&&!state.demo){renderAuth();}});
 const {data:{session}}=await supabase.auth.getSession();
-if(location.hash.includes('type=recovery')){recovery=true;renderAuth();}else if(session&&!recovery){await loadUser();}else renderAuth();
+if(passwordSetupRequested||recovery){recovery=true;renderAuth();}else if(session){await loadUser();}else renderAuth();

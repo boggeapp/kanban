@@ -1,4 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
+// Capture before the Auth SDK consumes and clears the callback fragment.
+export const passwordSetupRequested = ['invite','recovery'].includes(new URLSearchParams(location.hash.slice(1)).get('type'));
 export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL || 'https://glgvvywkhelpydodxajw.supabase.co',
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_MibwcPvzQ-IcbFJtnXGUgg_ZNVrPPEk'
