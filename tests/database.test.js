@@ -217,3 +217,38 @@ test('ERP rejeita números repetidos e entradas inválidas sem alterar saldo ou 
  const draft=await stage(other,{send_date:day},other.current_grid,zero(),zero(),false);await assert.rejects(()=>split(draft,[erpPart('ERP-LATE',10)]),/posterior/);
  await db.exec('reset role;set role anon');await assert.rejects(()=>split(p,[erpPart('ERP-ANON',1)]),/permission denied/);
 });
+
+test('migração de distribuição total preserva cards, registros e auditoria existentes',async()=>{
+ await db.exec('reset role');
+ const snapshot=async()=>Promise.all(['plans','stage_records','audit_events'].map(t=>db.query(`select to_jsonb(r) as data from public.${t} r order by id`).then(r=>r.rows)));
+ const before=await snapshot();
+ await db.exec(await readFile(new URL('../supabase/migrations/202610020003_full_split.sql',import.meta.url),'utf8'));
+ assert.deepEqual(await snapshot(),before);
+});
+test('distribuir 100% em três lavagens encerra a base e mantém histórico sem duplicar perdas',async()=>{
+ let p=await throughSewing();const original=p;
+ const previous=(await db.query('select to_jsonb(r) as data from public.stage_records r where plan_id=$1 order by id',[p.id])).rows;
+ const children=(await split(p,[erpPart('WASH-1',30,'REF-CLARA','Lavagem clara'),erpPart('WASH-2',40,'REF-ESCURA','Lavagem escura'),erpPart('WASH-3',28,'REF-STONE','Lavagem stone')])).rows;
+ p=await fresh(p);assert(p.split_at);assert.equal(p.stage,'lavanderia');assert.deepEqual(p.current_grid,zero());assert.equal(p.deleted_at,null);assert.deepEqual(p.planned_grid,original.planned_grid);
+ assert.equal(p.op_number,original.op_number);assert.equal(p.reference,original.reference);
+ assert.deepEqual((await db.query('select to_jsonb(r) as data from public.stage_records r where plan_id=$1 order by id',[p.id])).rows,previous);
+ assert.equal(children.reduce((n,c)=>n+c.current_grid['38'],0),98);
+ assert.equal((await db.query('select count(*)::int as n from public.stage_records where plan_id=any($1::uuid[])',[children.map(c=>c.id)])).rows[0].n,0);
+ const audit=(await db.query("select after_data from public.audit_events where plan_id=$1 and action='op_desmembrada' order by id desc limit 1",[p.id])).rows[0].after_data;
+ assert.equal(audit.fully_split,true);assert.equal(audit.children.length,3);assert.deepEqual(audit.remaining_grid,zero());
+ await assert.rejects(()=>stage(p,{}),/distribuído/);await assert.rejects(()=>back(p,'costura'),/distribuído/);await assert.rejects(()=>exclude(p),/destinos/);
+ await assert.rejects(()=>split(p,[erpPart('WASH-4',1)]),/não pode/);
+ let child=await stage(children[0],{send_date:day,expected_date:day,return_date:day},qty(29),qty(1));
+ assert.equal(child.stage,'acabamento');assert.equal((await partial(child,10)).stage,'embalagem');
+ const losses=(await db.query("select sum((scrap_grid->>'38')::int)::int as n from public.stage_records where plan_id=any($1::uuid[]) and completed_at is not null",[[p.id,child.id]])).rows[0].n;assert.equal(losses,3);
+ await as(risk);assert.deepEqual((await fresh(p)).split_at,p.split_at);assert.equal((await db.query('select * from public.stage_records where plan_id=$1',[p.id])).rows.length,previous.length);
+});
+test('saldo parcial pode ser totalmente desmembrado depois, sem permitir excesso por tamanho',async()=>{
+ let p=await throughSewing();const [first]=(await split(p,[erpPart('FULL-LATER-1',30)])).rows;p=await fresh(p);assert.equal(p.split_at,null);assert.equal(p.current_grid['38'],68);
+ await assert.rejects(()=>split(p,[{...erpPart('FULL-WRONG',67),grid:{...qty(67),'40':1}}]),/excedem/);
+ await assert.rejects(()=>split(p,[erpPart('FULL-EMPTY',0)]),/ao menos/);
+ await assert.rejects(()=>split(p,[erpPart('FULL-OVER',69)]),/excedem/);
+ const version=p.version;const [last]=(await split(p,[erpPart('FULL-LATER-2',68)])).rows;p=await fresh(p);assert(p.split_at);assert.equal(p.version,version+1);assert.deepEqual(p.current_grid,zero());
+ assert.equal(first.current_grid['38']+last.current_grid['38'],98);
+ const old=p;await exclude(last);assert.deepEqual((await fresh(p)).current_grid,zero());assert.deepEqual((await fresh(p)).split_at,old.split_at);
+});

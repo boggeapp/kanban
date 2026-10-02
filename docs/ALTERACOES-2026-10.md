@@ -4,7 +4,7 @@
 
 **Desmembrar OP:** o PCP abre um card cuja Costura terminou, antes de iniciar a Lavanderia. Informa quantas novas OPs deseja criar e, para cada uma, o **número criado no ERP**, a **referência**, a **descrição** e a grade por tamanho. Referência e descrição vêm preenchidas com os dados atuais e podem ser alteradas. Não há geração automática de sufixos A/B/C nem integração de criação no ERP.
 
-A OP original mantém seu número, referência, descrição e histórico, e continua ativa na Lavanderia com o saldo restante. Cada nova OP deve receber peças; a OP original deve manter ao menos uma peça. Em cada tamanho, `saldo anterior = saldo da OP atual + soma das novas OPs`. Exemplo: OP 123 com 100 peças → 40 permanecem na OP 123, 35 vão para OP 900 e 25 para OP 901. Números informados não podem repetir a OP atual, outra nova OP ou uma OP já existente, inclusive excluída.
+A OP original mantém seu número, referência, descrição e histórico, e continua ativa na Lavanderia enquanto houver saldo restante. Cada nova OP deve receber peças; a OP original pode ficar zerada. Quando todo o saldo for distribuído, a base recebe a indicação **Totalmente desmembrada**, sai do Kanban ativo e permanece consultável em **Cards distribuídos** e pelo vínculo **Consultar origem** dos destinos. Não é excluída nem marcada como produção concluída. Em cada tamanho, `saldo anterior = saldo da OP atual + soma das novas OPs`. Exemplo: OP 123 com 100 peças → 40 permanecem na OP 123, 35 vão para OP 900 e 25 para OP 901. Números informados não podem repetir a OP atual, outra nova OP ou uma OP já existente, inclusive excluída.
 
 É possível criar de 1 a 100 novas OPs por operação e repetir o desmembramento da OP original enquanto a Lavanderia não tiver sido iniciada. OPs derivadas não podem ser desmembradas novamente. Histórico e refugos anteriores não são copiados aos filhos, evitando duplicação. Desmembramentos da versão anterior permanecem intactos: a atualização não renomeia OPs nem redistribui peças já registradas.
 
@@ -32,14 +32,14 @@ Consertos pertencem às peças prontas, nunca são outra baixa. Exemplo: de 100 
 | Burlar permissões pelo navegador | RLS, tabelas somente leitura para clientes, RPCs com validação de perfil | Chave pública continua sem acesso administrativo |
 | Editar planejamento depois de retorno ao Risco | Bloqueio quando há registros arquivados ou origem derivada | Planejamento original permanece auditável |
 | Comparar um lote pequeno com o corte inteiro | Grade do lote como entrada; link explícito para origem e corte original | Não rateia o corte original artificialmente entre lotes |
-| Migração danificar produção existente | Migrações incrementais; a revisão ERP substitui apenas a função de desmembramento, sem regravar cards existentes | Precisa aplicar a migração uma única vez |
+| Migração danificar produção existente | Migrações incrementais; as revisões ERP e distribuição total substituem apenas a função de desmembramento, sem regravar cards existentes | Precisa aplicar a migração uma única vez |
 
 O fluxo anterior, autenticação, criação de usuários, 19 tamanhos, destaques amarelos, costura externa, rascunhos e validação de campos continuam usando os mesmos mecanismos. Google Drive continua fora do escopo. O banco mantém as versões anteriores das funções **privadas**, sem permissão de execução para clientes, para reutilizar a lógica validada sem permitir bypass.
 
 ## Implantação e recuperação
 
 1. Executar testes e build. Publicar o frontend; ele reconhece a presença das colunas novas e não mostra operações novas antes da migração.
-2. Aplicar as migrações pendentes na ordem: `202610020001_production_lots.sql` e depois `202610020002_erp_split.sql`. Se a primeira já foi aplicada, executar **somente a segunda**. Não repetir a migração inicial. A revisão ERP altera a função, preservando integralmente cards e históricos existentes. Frontends antigos que enviam somente grades são rejeitados: precisam recarregar para informar os números do ERP.
+2. Aplicar as migrações pendentes na ordem: `202610020001_production_lots.sql`, `202610020002_erp_split.sql` e `202610020003_full_split.sql`. Executar somente as ainda pendentes. Não repetir a migração inicial. A revisão de distribuição total altera a função, preservando integralmente cards e históricos existentes. Frontends antigos que enviam somente grades são rejeitados: precisam recarregar para informar os números do ERP.
 3. Conferir colunas, funções, RLS e contagens antes/depois. Recarregar abas do sistema para carregar a versão publicada.
 4. Se uma operação falhar, a transação reverte todos os seus efeitos. Não reaplicar migração já concluída. Não remover colunas/funções para tentar desfazer uma operação real. Usar restauração/retorno quando permitidos, mantendo o histórico.
 
@@ -50,3 +50,9 @@ Abas antigas não entendem os novos containers. As rotinas do servidor impedem g
 `node --test tests/*.test.js`: testes de domínio e SQL real em PostgreSQL/PGlite, incluindo migração sobre dados existentes, fluxo antigo completo, RLS, papéis, datas, conservação por tamanho, conflitos de OP e versão, rollback do desmembramento, parcelas em ambas as etapas, retorno e restauração. Esses testes não substituem carga simultânea em PostgreSQL hospedado nem validação de entrega de e-mails.
 
 `node tests/ui-preview.mjs`: prévia local em `http://127.0.0.1:5174/kanban/`, com o módulo de API substituído por dados fictícios e gravações bloqueadas. Permite conferir os formulários reais sem acessar o Supabase. Não integra o bundle de produção.
+
+## Distribuição integral da OP base
+
+Para uma calça base de 300 peças, o PCP pode destinar 100 à OP de lavagem clara, 120 à escura e 80 à stone. A base fica com saldo zero; as três OPs seguem na Lavanderia, com referências e descrições próprias. A mesma regra funciona ao distribuir um saldo restante após desmembramentos parciais.
+
+As etapas anteriores, grades planejadas, datas, responsáveis, consertos e refugos permanecem na base. O evento de desmembramento preserva a grade anterior, o saldo final, o autor, o motivo e os destinos com suas grades. Os filhos não recebem cópias dos registros anteriores. Assim, a base não entra no número de cards ativos, mas seus refugos históricos continuam contados uma única vez. Retorno, exclusão e novas finalizações da base totalmente desmembrada ficam bloqueados; excluir um destino não devolve peças à base. Nenhum dado anterior é alterado pela migração.
