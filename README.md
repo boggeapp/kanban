@@ -23,11 +23,11 @@ Abra `http://localhost:5173/kanban/`. A demonstração usa dados fictícios em m
 
 ## Ativar o Supabase
 
-1. Abra o projeto `glgvvywkhelpydodxajw` e execute `supabase/migrations/202609180001_kanban.sql` no SQL Editor. Execute uma única vez: é uma migração inicial transacional, não um script para recriar tabelas. Em seguida, aplique `supabase/migrations/202610020001_production_lots.sql`. Depois, aplique `supabase/migrations/202610020002_erp_split.sql` e `supabase/migrations/202610020003_full_split.sql`. Em instalações existentes, aplique somente migrações ainda pendentes, na ordem dos arquivos.
+1. Abra o projeto `glgvvywkhelpydodxajw` e execute `supabase/migrations/202609180001_kanban.sql` no SQL Editor. Execute uma única vez: é uma migração inicial transacional, não um script para recriar tabelas. Em seguida, aplique `supabase/migrations/202610020001_production_lots.sql`. Depois, aplique `supabase/migrations/202610020002_erp_split.sql` e `supabase/migrations/202610020003_full_split.sql`. Em seguida, aplique `supabase/migrations/202610020004_multi_roles.sql`. Em instalações existentes, aplique somente migrações ainda pendentes, na ordem dos arquivos.
 2. Em Authentication → URL Configuration, configure Site URL e Redirect URL como `https://boggeapp.github.io/kanban/`. Para desenvolvimento, adicione `http://localhost:5173/kanban/` e/ou `http://127.0.0.1:5173/kanban/`.
 3. Mantenha confirmação de e-mail habilitada. Configure SMTP de produção para entrega de confirmação e recuperação de senha.
 4. Em uma instalação nova, o primeiro administrador cria e confirma a própria conta ou recebe um convite pelo painel Supabase. Um administrador do projeto executa `supabase/bootstrap-admin.sql`, substituindo somente o e-mail indicado. O convite abre a tela de definição de senha. Não envie senhas ou chaves secretas pelo chat nem as coloque no repositório.
-5. Demais usuários criam suas contas; o PCP aprova e atribui perfis na tela **Usuários**. O cadastro nunca aceita um perfil administrativo enviado pelo navegador.
+5. Demais usuários criam suas contas; o PCP aprova e marca uma ou mais responsabilidades na tela **Usuários**. O cadastro nunca aceita um perfil administrativo enviado pelo navegador.
 
 A chave `sb_publishable_...` usada na aplicação é pública por definição e não concede administração. Nenhuma chave `service_role`, senha de banco ou token de gerenciamento é necessária no frontend. URLs/chaves públicas podem ser sobrescritas pelas variáveis de `.env.example`.
 
@@ -43,7 +43,7 @@ O workflow `.github/workflows/pages.yml` executa testes, compila e publica cada 
 - Criação e horários gerados no servidor. Comparação de datas no fuso `America/Sao_Paulo`.
 - Datas novas não podem ser retroativas. Datas já salvas em rascunhos mantêm sua validade no dia seguinte; alterá-las exige novamente uma data válida.
 - Rascunho mantém o card na coluna; **Finalizar** valida campos e conferência antes de avançar atomicamente. Não há arraste que burle validações.
-- PCP administra usuários e opera todas as etapas. Planejamento cria cards. Operadores alteram exclusivamente sua etapa; usuários aprovados podem consultar o fluxo completo.
+- PCP administra usuários e opera todas as etapas. Planejamento cria cards. Operadores podem receber várias responsabilidades e alteram exclusivamente as etapas selecionadas pelo PCP; usuários aprovados podem consultar o fluxo completo.
 - Planejamento pode ser editado pelo criador antes de iniciar o Risco. O PCP também pode corrigir o planejamento nesse momento por possuir permissão administrativa total. Todas as versões ficam no histórico.
 - Risco, Corte e PCP podem ajustar a grade. Separação só consulta. Costura em diante mostra a grade de entrada e a grade do Corte.
 - Diferenças aparecem em amarelo. Histórico inclui autor, horário, dados, grades e versões anteriores, inclusive dos rascunhos.
@@ -59,3 +59,7 @@ O workflow `.github/workflows/pages.yml` executa testes, compila e publica cada 
 `pnpm test` roda testes de domínio e a migração real em PostgreSQL via PGlite, com papéis `anon`/`authenticated`, `auth.uid()` simulado e RLS habilitada. Verifica negações de acesso, promoção indevida, transições, conservação de quantidades, histórico, datas, duplicidade de OP e conflito de versão. Não substitui a homologação da autenticação, SMTP e migração no Supabase hospedado.
 
 Consulte [a análise completa da arquitetura](docs/ARQUITETURA.md) e [o roteiro de homologação](docs/HOMOLOGACAO.md).
+
+## Múltiplas responsabilidades
+
+Na tela **Usuários**, o PCP marca as etapas de cada pessoa (por exemplo, Separação, Costura, Lavanderia e Acabamento) e clica em **Salvar acesso**. O filtro **Minhas etapas** reúne todas as responsabilidades atribuídas. PCP é uma opção administrativa exclusiva, com acesso total; não deve ser combinada com outras etapas. As permissões existentes são preservadas na atualização.

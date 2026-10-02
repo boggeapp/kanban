@@ -39,7 +39,7 @@ O fluxo anterior, autenticação, criação de usuários, 19 tamanhos, destaques
 ## Implantação e recuperação
 
 1. Executar testes e build. Publicar o frontend; ele reconhece a presença das colunas novas e não mostra operações novas antes da migração.
-2. Aplicar as migrações pendentes na ordem: `202610020001_production_lots.sql`, `202610020002_erp_split.sql` e `202610020003_full_split.sql`. Executar somente as ainda pendentes. Não repetir a migração inicial. A revisão de distribuição total altera a função, preservando integralmente cards e históricos existentes. Frontends antigos que enviam somente grades são rejeitados: precisam recarregar para informar os números do ERP.
+2. Aplicar as migrações pendentes na ordem: `202610020001_production_lots.sql`, `202610020002_erp_split.sql`, `202610020003_full_split.sql` e `202610020004_multi_roles.sql`. Executar somente as ainda pendentes. Não repetir a migração inicial. A revisão de distribuição total altera a função, preservando integralmente cards e históricos existentes. Frontends antigos que enviam somente grades são rejeitados: precisam recarregar para informar os números do ERP.
 3. Conferir colunas, funções, RLS e contagens antes/depois. Recarregar abas do sistema para carregar a versão publicada.
 4. Se uma operação falhar, a transação reverte todos os seus efeitos. Não reaplicar migração já concluída. Não remover colunas/funções para tentar desfazer uma operação real. Usar restauração/retorno quando permitidos, mantendo o histórico.
 
@@ -56,3 +56,11 @@ Abas antigas não entendem os novos containers. As rotinas do servidor impedem g
 Para uma calça base de 300 peças, o PCP pode destinar 100 à OP de lavagem clara, 120 à escura e 80 à stone. A base fica com saldo zero; as três OPs seguem na Lavanderia, com referências e descrições próprias. A mesma regra funciona ao distribuir um saldo restante após desmembramentos parciais.
 
 As etapas anteriores, grades planejadas, datas, responsáveis, consertos e refugos permanecem na base. O evento de desmembramento preserva a grade anterior, o saldo final, o autor, o motivo e os destinos com suas grades. Os filhos não recebem cópias dos registros anteriores. Assim, a base não entra no número de cards ativos, mas seus refugos históricos continuam contados uma única vez. Retorno, exclusão e novas finalizações da base totalmente desmembrada ficam bloqueados; excluir um destino não devolve peças à base. Nenhum dado anterior é alterado pela migração.
+
+## Múltiplas responsabilidades por usuário
+
+O PCP pode selecionar uma ou várias responsabilidades: Planejamento, Risco, Corte, Separação, Costura, Lavanderia, Acabamento e Embalagem. PCP permanece um perfil administrativo exclusivo com acesso total. Marcar várias etapas nunca concede permissão de gestão de usuários, retorno, exclusão ou desmembramento.
+
+As verificações do banco passam a considerar a responsabilidade principal e as adicionais, incluindo salvar rascunho, finalizar etapas, criar planejamentos e liberar parcelas. A autoria exigida para editar planejamento é preservada. Usuários inativos ou pendentes não ganham acesso. O cadastro ignora perfis informados nos metadados; somente PCP pode conceder acesso. As permissões adicionais não são graváveis diretamente pelo navegador.
+
+A nova coluna inicia vazia, preservando o acesso de cada pessoa. Alterações registram os perfis anteriores e novos na auditoria e usam versão para evitar sobrescrever alterações feitas por outro administrador. A edição do próprio acesso continua bloqueada. Clientes antigos não podem substituir silenciosamente uma seleção múltipla por uma etapa única: precisam recarregar a página. Nenhuma responsabilidade adicional é concedida automaticamente na migração.

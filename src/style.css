@@ -12,3 +12,5 @@
 .production-actions p{margin:0;line-height:1.6}.operation-buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.op-label{display:block;font-weight:700;font-size:12px;color:#234c78;margin:6px 0}.production-actions details{margin:0}.production-actions>strong{color:#183d65}
 #split-preview{font-weight:600;line-height:1.8}#split-grids .grade input{min-width:68px}.production-actions .secondary{white-space:normal;text-align:left}
 @media(max-width:600px){.production-actions{padding:16px}.operation-buttons>*{flex:1 1 140px}}
+
+.user-row .responsibilities{flex:1 1 380px;min-width:0}.responsibilities legend{font-size:13px;font-weight:600;margin-bottom:10px}.role-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:8px 14px}.user-row .role-options .checkbox-label{margin:0;width:auto;align-items:flex-start}.role-options input{flex-shrink:0}.account small{white-space:normal;line-height:1.5}

@@ -7,8 +7,9 @@ export const REPAIR_STAGES = ['costura','acabamento','embalagem'];
 export const emptyGrid = () => Object.fromEntries(SIZES.map(s => [s,0]));
 export const total = g => SIZES.reduce((n,s) => n + Number(g?.[s] || 0),0);
 export const today = () => new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
-export const canOperate = (profile,stage) => profile?.active && (profile.role === 'pcp' || profile.role === stage);
-export const canPlan = p => p?.active && ['pcp','planejamento'].includes(p.role);
+export const profileRoles = p => p?.role==='pendente' ? [] : [...new Set([p?.role,...(p?.additional_roles||[])])].filter(r=>ROLES.includes(r));
+export const canOperate = (profile,stage) => Boolean(profile?.active && profile?.role!=='pendente' && (profile.role==='pcp' || profileRoles(profile).includes(stage)));
+export const canPlan = p => canOperate(p,'planejamento');
 export function validateGrid(g) {
   if (!g || Object.keys(g).length !== SIZES.length || SIZES.some(s => !Number.isInteger(g[s]) || g[s]<0 || g[s]>1000000)) throw new Error('Preencha a grade com quantidades inteiras de 0 a 1.000.000.');
   return g;

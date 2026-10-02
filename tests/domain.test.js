@@ -26,3 +26,11 @@ test('permissões e campos dependem da etapa e tipo de costura',()=>{
  assert(!fieldsFor('separacao','interna').some(f=>f.name==='workshop'));
  assert.deepEqual(fieldsFor('costura','externa').map(f=>f.name),['return_date']);
 });
+
+test('múltiplas responsabilidades só autorizam etapas selecionadas de usuários ativos',()=>{
+ const user={active:true,role:'separacao',additional_roles:['costura','lavanderia','acabamento']};
+ for(const stage of ['separacao','costura','lavanderia','acabamento'])assert.equal(canOperate(user,stage),true);
+ for(const stage of ['risco','corte','pcp','embalagem','planejamento'])assert.equal(canOperate(user,stage),false);
+ assert.equal(canOperate({...user,active:false},'costura'),false);
+ assert.equal(canOperate({...user,role:'pendente'},'costura'),false);
+});

@@ -252,3 +252,51 @@ test('saldo parcial pode ser totalmente desmembrado depois, sem permitir excesso
  assert.equal(first.current_grid['38']+last.current_grid['38'],98);
  const old=p;await exclude(last);assert.deepEqual((await fresh(p)).current_grid,zero());assert.deepEqual((await fresh(p)).split_at,old.split_at);
 });
+
+test('migração de responsabilidades preserva acessos atuais e dados de produção',async()=>{
+ await db.exec('reset role');const before=(await db.query('select * from public.profiles order by id')).rows;
+ const plans=(await db.query('select to_jsonb(p) as data from public.plans p order by id')).rows;
+ await db.exec(await readFile(new URL('../supabase/migrations/202610020004_multi_roles.sql',import.meta.url),'utf8'));
+ const after=(await db.query('select * from public.profiles order by id')).rows;
+ before.forEach((p,i)=>{for(const key of Object.keys(p))assert.deepEqual(after[i][key],p[key]);assert.deepEqual(after[i].additional_roles,[]);assert.equal(after[i].access_version,1);});
+ assert.deepEqual((await db.query('select to_jsonb(p) as data from public.plans p order by id')).rows,plans);
+});
+async function permissions(id,roles,active=true,version=null){
+ if(version===null)version=(await db.query('select access_version from public.profiles where id=$1',[id])).rows[0].access_version;
+ return db.query('select public.set_user_roles($1,$2,$3,$4)',[id,roles,active,version]);
+}
+test('um operador altera todas as responsabilidades atribuídas, sem receber privilégios PCP',async()=>{
+ await as(admin);await permissions(pending,['separacao','costura','lavanderia','acabamento']);
+ let p=await plan();p=await stage(p,{plotter:'P',start_date:day,end_date:day,responsible:'R'});p=await stage(p,{start_date:day,end_date:day,responsible:'R'});p=await stage(p,{op_number:'MULTI-1',op_date:day});
+ await as(pending);await assert.rejects(plan,/Sem permissão/);
+ p=await stage(p,{start_date:day,end_date:day,sewing_type:'interna'});p=await stage(p,{start_date:day,end_date:day},qty(98),qty(2));
+ await assert.rejects(()=>split(p,[erpPart('MULTI-CHILD',10)]),/Apenas PCP/);
+ await assert.rejects(()=>back(p,'costura'),/Apenas PCP/);await assert.rejects(()=>exclude(p),/Apenas PCP/);
+ p=await stage(p,{send_date:day,expected_date:day,return_date:day});const child=await partial(p,20);assert.equal(child.stage,'embalagem');
+ await assert.rejects(()=>stage(child,{start_date:day,end_date:day}),/não pode/);await assert.rejects(()=>partial(child,10),/Sem permissão/);
+ await assert.rejects(()=>permissions(risk,['pcp']),/Apenas PCP/);
+ await assert.rejects(()=>db.query("update public.profiles set additional_roles=array['embalagem'] where id=$1",[pending]),/permission denied/);
+ await as(admin);await permissions(pending,['planejamento','costura','embalagem']);await as(pending);
+ const own=await plan();assert.equal(own.created_by,pending);await assert.rejects(()=>stage(own,{plotter:'P',start_date:day,end_date:day,responsible:'R'}),/não pode/);
+ assert.equal((await partial(child,10)).stage,'concluido');
+ await assert.rejects(async()=>stage(await fresh(p),{start_date:day,end_date:day}),/não pode/); // acabamento was revoked
+});
+test('atribuição exige PCP, controla versão, bloqueia autoalteração e não aceita perfis inválidos',async()=>{
+ await as(admin);const old=(await db.query('select * from public.profiles where id=$1',[risk])).rows[0];
+ await permissions(risk,['risco','corte','risco']);const p=(await db.query('select * from public.profiles where id=$1',[risk])).rows[0];assert.equal(p.additional_roles.length,1);
+ await assert.rejects(()=>permissions(risk,['costura'],true,old.access_version),/atualizado/);
+ await assert.rejects(()=>db.query('select public.set_user_role($1,$2,$3)',[risk,'risco',true]),/múltiplas/);
+ for(const roles of [[],['invalido'],['pcp','costura'],['pendente'],[null]])await assert.rejects(()=>permissions(risk,roles),/válidas|apenas PCP/);
+ await assert.rejects(()=>permissions(admin,['risco']),/próprio/);
+ await permissions(risk,['risco','corte'],false);await as(risk);assert.equal((await db.query('select * from public.plans')).rows.length,0);assert.equal((await db.query("select public.has_responsibility('corte') as allowed")).rows[0].allowed,false);
+ await assert.rejects(plan,/Sem permissão/);
+ await as(admin);await permissions(risk,['risco']);await db.query('select public.set_user_role($1,$2,$3)',[risk,'corte',true]);assert.equal((await db.query('select role from public.profiles where id=$1',[risk])).rows[0].role,'corte');
+ const audit=(await db.query("select after_data from public.audit_events where action='permissao_alterada' and after_data->>'id'=$1 order by id desc limit 1",[risk])).rows[0].after_data;assert.equal(audit.role,'corte');assert.deepEqual(audit.additional_roles,[]);
+ await db.exec('reset role;set role anon');await assert.rejects(()=>db.query('select public.set_user_roles($1,$2,true,1)',[risk,['pcp']]),/permission denied/);
+});
+test('metadados do cadastro não concedem responsabilidades e funções privadas continuam bloqueadas',async()=>{
+ await db.exec('reset role');const newcomer='00000000-0000-0000-0000-000000000099';await db.query('insert into auth.users values($1,$2)',[newcomer,{name:'Novo',role:'pcp',additional_roles:['costura','lavanderia']}]);
+ await as(newcomer);const p=(await db.query('select * from public.profiles where id=$1',[newcomer])).rows[0];assert.equal(p.role,'pendente');assert.deepEqual(p.additional_roles,[]);assert.equal(p.active,false);
+ await assert.rejects(()=>db.query('select public.save_plan_v1($1,$2)',[{},grid()]),/permission denied/);
+ await assert.rejects(()=>db.query('select public.save_stage_v1($1,1,$2,$3,$4,$5,false)',[upgradePlan.id,{},grid(),zero(),zero()]),/permission denied/);
+});
