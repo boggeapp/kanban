@@ -1,3 +1,5 @@
+> Atualização de 02/10/2026: este documento descreve a base original. Para OPs derivadas, parcelas, retorno, exclusão lógica e arquivos de etapas, prevalece [a análise da evolução](ALTERACOES-2026-10.md).
+
 # Análise de arquitetura — BOGGE
 
 ## Decisão

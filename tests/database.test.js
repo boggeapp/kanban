@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {PGlite} from '@electric-sql/pglite';
 import {emptyGrid} from '../src/domain.js';
-let db;
+let db,upgradeSnapshot,upgradePlan;
 const admin='00000000-0000-0000-0000-000000000001',planner='00000000-0000-0000-0000-000000000002',risk='00000000-0000-0000-0000-000000000003',cutter='00000000-0000-0000-0000-000000000004',pending='00000000-0000-0000-0000-000000000005';
 const grid=()=>({...emptyGrid(),'38':100});const zero=()=>emptyGrid();
 const day='2099-01-01';
@@ -17,8 +17,16 @@ before(async()=>{
   await db.query("insert into auth.users values($1,'{\"name\":\"Teste\",\"role\":\"pcp\"}')",[id]);
   if(role!=='pendente')await db.query('update public.profiles set role=$1,active=true where id=$2',[role,id]);
  }
+ await as(admin);upgradePlan=await stage(await plan(),{plotter:'P',start_date:day,end_date:day,responsible:'R'});
+ upgradeSnapshot=(await db.query('select to_jsonb(r) as data from public.stage_records r where plan_id=$1',[upgradePlan.id])).rows;
+ await db.exec('reset role');await db.exec(await readFile(new URL('../supabase/migrations/202610020001_production_lots.sql',import.meta.url),'utf8'));
 });
 after(async()=>db?.close());
+test('migração preserva integralmente cards e registros de banco já utilizado',async()=>{
+ await as(admin);const upgraded=(await db.query('select * from public.plans where id=$1',[upgradePlan.id])).rows[0];
+ for(const key of Object.keys(upgradePlan))assert.deepEqual(upgraded[key],upgradePlan[key]);
+ assert.deepEqual((await db.query('select to_jsonb(r) as data from public.stage_records r where plan_id=$1',[upgradePlan.id])).rows,upgradeSnapshot);
+});
 test('cadastro não eleva permissões; anônimo e pendente não leem produção',async()=>{
  await as(pending);const p=(await db.query('select * from public.profiles')).rows;assert.equal(p.length,1);assert.equal(p[0].role,'pendente');assert.equal(p[0].active,false);assert.equal((await db.query('select * from public.plans')).rows.length,0);await assert.rejects(plan,/Sem permissão/);
  await db.exec('reset role;set role anon');await assert.rejects(()=>db.query('select * from public.plans'),/permission denied/);await assert.rejects(plan,/permission denied/);
@@ -59,4 +67,111 @@ test('administração de acesso exige PCP e impede autoalteração',async()=>{
  await as(risk);await assert.rejects(()=>db.query('select public.set_user_role($1,$2,$3)',[pending,'pcp',true]),/Apenas PCP/);
  await as(admin);await assert.rejects(()=>db.query('select public.set_user_role($1,$2,$3)',[admin,'risco',false]),/próprio/);
  await db.query('select public.set_user_role($1,$2,$3)',[pending,'costura',true]);await as(pending);assert.equal((await db.query('select public.current_role() as role')).rows[0].role,'costura');
+});
+
+const qty=n=>({...zero(),'38':n});
+const fresh=async p=>(await db.query('select * from public.plans where id=$1',[p.id])).rows[0];
+const split=(p,parts)=>db.query('select * from public.split_plan($1,$2,$3,$4)',[p.id,p.version,JSON.stringify(parts),'Divisão por destino']);
+const partial=async(p,n,s=0,r=0,data={})=>(await db.query('select * from public.release_partial($1,$2,$3,$4,$5,$6)',[p.id,p.version,{confirmed:true,start_date:day,end_date:day,...data},qty(n),qty(s),qty(r)])).rows[0];
+const back=async(p,target)=>(await db.query('select * from public.return_stage($1,$2,$3,$4)',[p.id,p.version,target,'Correção de lançamento'])).rows[0];
+const exclude=async(p,deleted=true)=>(await db.query('select * from public.set_plan_deleted($1,$2,$3,$4)',[p.id,p.version,deleted,'Correção administrativa'])).rows[0];
+let opSequence=10;
+async function throughSewing(){
+ await as(admin);let p=await plan();p=await stage(p,{plotter:'P',start_date:day,end_date:day,responsible:'R'});
+ p=await stage(p,{start_date:day,end_date:day,responsible:'R'});p=await stage(p,{op_number:'OP-'+opSequence++,op_date:day});
+ p=await stage(p,{start_date:day,end_date:day,sewing_type:'interna'});
+ return stage(p,{start_date:day,end_date:day},qty(98),qty(2));
+}
+const throughLaundry=async()=>stage(await throughSewing(),{send_date:day,expected_date:day,return_date:day},qty(95),qty(3));
+
+test('desmembramento conserva cada tamanho, bloqueia acesso indevido e não copia perdas',async()=>{
+ let p=await throughSewing();await as(risk);await assert.rejects(()=>split(p,[qty(48),qty(50)]),/Apenas PCP/);await as(admin);
+ await assert.rejects(()=>split(p,[qty(49),qty(50)]),/soma/);
+ await assert.rejects(()=>split(p,[qty(0),qty(98)]),/ao menos/);
+ await assert.rejects(()=>split(p,[{...qty(48),'40':1},qty(50)]),/soma/);
+ const children=(await split(p,[qty(48),qty(50)])).rows;assert.equal(children.length,2);
+ assert.deepEqual(children.map(c=>c.op_number),[p.op_number+'-A',p.op_number+'-B']);
+ assert(children.every(c=>c.parent_id===p.id&&c.stage==='lavanderia'));
+ assert.equal((await db.query('select * from public.stage_records where plan_id=$1',[children[0].id])).rows.length,0);
+ const source=await fresh(p);assert(source.split_at);assert.equal(source.current_grid['38'],98);
+ await assert.rejects(()=>stage(source,{}),/distribuído/);await assert.rejects(()=>back(source,'costura'),/distribuído/);
+ await assert.rejects(()=>exclude(source),/destinos/);await assert.rejects(()=>split(p,[qty(48),qty(50)]),/atualizado/);
+ let child=await stage(children[0],{send_date:day,expected_date:day,return_date:day});child=await back(child,'lavanderia');assert.equal(child.current_grid['38'],48);
+ await assert.rejects(()=>back(child,'costura'),/inválida/);
+ const late=await throughSewing();const draft=await stage(late,{send_date:day},late.current_grid,zero(),zero(),false);
+ await assert.rejects(()=>split(draft,[qty(48),qty(50)]),/posterior/);
+});
+
+test('colisão de OP em desmembramento reverte todos os filhos atomicamente',async()=>{
+ const p=await throughSewing(),other=await throughSewing();await db.exec('reset role');
+ await db.query('update public.plans set op_number=$1 where id=$2',[p.op_number+'-B',other.id]);await as(admin);
+ await assert.rejects(()=>split(p,[qty(48),qty(50)]),/duplicate key/);
+ assert.equal((await db.query('select count(*)::int as n from public.plans where parent_id=$1',[p.id])).rows[0].n,0);
+ assert.equal((await fresh(p)).split_at,null);assert.equal((await fresh(p)).version,p.version);
+});
+
+test('parcelas avançam separadamente e mantêm saldo, consertos, OP e versão',async()=>{
+ let p=await throughLaundry();await as(risk);await assert.rejects(()=>partial(p,30),/Sem permissão/);await as(admin);
+ await assert.rejects(()=>partial(p,96),/excedem/);await assert.rejects(()=>partial(p,0),/ao menos/);
+ await assert.rejects(()=>partial(p,30,0,31),/Consertos/);await assert.rejects(()=>partial(p,30,0,1),/Descreva/);
+ await assert.rejects(()=>partial(p,30,0,0,{confirmed:false}),/Confirme/);
+ await assert.rejects(()=>partial(p,30,0,0,{start_date:'2020-01-01'}),/retroativas/);
+ assert.equal((await db.query('select count(*)::int as n from public.plans where parent_id=$1',[p.id])).rows[0].n,0);
+ const original=p;const a=await partial(p,30,2,3,{repair_notes:'Ajuste de barra'});p=await fresh(p);
+ assert.equal(a.stage,'embalagem');assert.equal(a.op_number,p.op_number);assert.equal(a.lot_label,'1');assert.equal(p.current_grid['38'],63);assert.equal(p.stage,'acabamento');
+ await assert.rejects(()=>partial(original,30),/atualizado/);await assert.rejects(()=>back(p,'lavanderia'),/originou/);await assert.rejects(()=>exclude(p),/destinos/);
+ const b=await partial(p,60,3);p=await fresh(p);assert.equal(b.lot_label,'2');assert(p.distributed_at);assert.equal(p.current_grid['38'],0);
+ await assert.rejects(()=>stage(p,{start_date:day,end_date:day}),/distribuído/);
+ const packed=await partial(a,10);assert.equal(packed.stage,'concluido');assert.equal(packed.lot_label,'1.1');assert.equal(packed.current_grid['38'],10);
+ const aBalance=await fresh(a);assert.equal(aBalance.current_grid['38'],20);
+ const done=await stage(aBalance,{start_date:day,end_date:day});assert.equal(done.stage,'concluido');
+ const losses=(await db.query('select sum((scrap_grid->>\'38\')::int)::int as n from public.stage_records where plan_id=any($1::uuid[]) and completed_at is not null',[[p.id,a.id,b.id,packed.id]])).rows[0].n;
+ assert.equal(losses,10); // sewing 2 + laundry 3 + finishing 5; packaging adds none
+});
+
+test('retorno preserva histórico, restaura entrada e permite refazer sem duplicar refugos',async()=>{
+ let p=await throughLaundry();p=await stage(p,{start_date:day,end_date:day},qty(92),qty(3));
+ await as(risk);await assert.rejects(()=>back(p,'costura'),/Apenas PCP/);await as(admin);
+ const old=p;p=await back(p,'costura');assert.equal(p.stage,'costura');assert.equal(p.current_grid['38'],100);assert.equal(p.planned_grid['38'],100);
+ assert.equal((await db.query('select * from public.stage_archives where plan_id=$1',[p.id])).rows.length,3);
+ assert.equal((await db.query('select * from public.stage_records where plan_id=$1',[p.id])).rows.length,4);
+ await assert.rejects(()=>back(old,'costura'),/atualizado/);
+ await assert.rejects(()=>stage(p,{start_date:'2020-01-01',end_date:day}),/retroativas/);
+ p=await stage(p,{start_date:day,end_date:day},qty(99),qty(1));assert.equal(p.current_grid['38'],99);
+ p=await back(p,'risco');assert.equal(p.current_grid['38'],100);assert(p.op_number);
+ await assert.rejects(()=>db.query('select * from public.save_plan($1,$2,$3,$4)',[{reference:'R',description:'D',responsible:'X',combination:'C'},grid(),p.id,p.version]),/já iniciado/);
+ await assert.rejects(()=>db.query('delete from public.stage_archives where plan_id=$1',[p.id]),/permission denied/);
+});
+
+test('exclusão é reversível, respeita RLS, reserva OP e não devolve peças à origem',async()=>{
+ let p=await throughLaundry();let child=await partial(p,30);const balance=await fresh(p);
+ await as(risk);await assert.rejects(()=>exclude(child),/Apenas PCP/);await as(admin);const previous=child;child=await exclude(child);assert(child.deleted_at);
+ await assert.rejects(()=>stage(child,{start_date:day,end_date:day}),/excluído/);await assert.rejects(()=>exclude(previous),/atualizado/);
+ assert.equal((await fresh(p)).current_grid['38'],balance.current_grid['38']);
+ await as(risk);assert.equal(await fresh(child),undefined);
+ assert.equal((await db.query('select * from public.stage_records where plan_id=$1',[child.id])).rows.length,0);
+ assert.equal((await db.query('select * from public.audit_events where plan_id=$1',[child.id])).rows.length,0);
+ await as(admin);child=await exclude(child,false);assert.equal(child.deleted_at,null);assert.equal(child.current_grid['38'],30);
+ await assert.rejects(()=>back(child,'lavanderia'),/inválida/);child=await back(child,'acabamento');assert.equal(child.current_grid['38'],30);
+ await assert.rejects(async()=>exclude(await fresh(p)),/destinos/);
+});
+
+test('implementações privadas não permitem burlar controles de ciclo de vida',async()=>{
+ await as(admin);const p=await throughLaundry();
+ await assert.rejects(()=>db.query('select public.save_stage_v1($1,$2,$3,$4,$5,$6,false)',[p.id,p.version,{},p.current_grid,zero(),zero()]),/permission denied/);
+ await assert.rejects(()=>db.query("select public.archive_stages($1,'risco','apagar')",[p.id]),/permission denied/);
+ await assert.rejects(()=>db.query('select public.save_plan_v1($1,$2)',[{},grid()]),/permission denied/);
+ await db.exec('reset role;set role anon');await assert.rejects(()=>split(p,[qty(45),qty(50)]),/permission denied/);
+});
+
+test('operador correto libera parcelas e preserva início antigo já salvo em rascunho',async()=>{
+ let p=await throughLaundry();p=await stage(p,{start_date:day},p.current_grid,zero(),zero(),false);
+ await db.exec('reset role');await db.query("update public.stage_records set data=jsonb_set(data,'{start_date}','\"2020-01-01\"') where plan_id=$1 and stage='acabamento'",[p.id]);
+ await as(admin);await db.query('select public.set_user_role($1,$2,$3)',[pending,'acabamento',true]);await as(pending);
+ const a=await partial(p,20,0,0,{start_date:'2020-01-01'});assert.equal(a.stage,'embalagem');p=await fresh(p);
+ const b=await partial(p,25,0,0,{start_date:'2020-01-01'});assert.equal(b.stage,'embalagem');p=await fresh(p);assert.equal(p.current_grid['38'],50);
+ await assert.rejects(()=>partial(p,10,0,0,{start_date:'2020-01-02'}),/retroativas/);
+ await assert.rejects(()=>partial(a,5),/Sem permissão/);
+ await as(admin);await db.query('select public.set_user_role($1,$2,$3)',[pending,'embalagem',true]);await as(pending);
+ assert.equal((await partial(a,5)).stage,'concluido');
 });

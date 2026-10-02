@@ -23,7 +23,7 @@ Abra `http://localhost:5173/kanban/`. A demonstração usa dados fictícios em m
 
 ## Ativar o Supabase
 
-1. Abra o projeto `glgvvywkhelpydodxajw` e execute `supabase/migrations/202609180001_kanban.sql` no SQL Editor. Execute uma única vez: é uma migração inicial transacional, não um script para recriar tabelas.
+1. Abra o projeto `glgvvywkhelpydodxajw` e execute `supabase/migrations/202609180001_kanban.sql` no SQL Editor. Execute uma única vez: é uma migração inicial transacional, não um script para recriar tabelas. Em seguida, aplique `supabase/migrations/202610020001_production_lots.sql`. Em instalações existentes, aplique somente a nova migração.
 2. Em Authentication → URL Configuration, configure Site URL e Redirect URL como `https://boggeapp.github.io/kanban/`. Para desenvolvimento, adicione `http://localhost:5173/kanban/` e/ou `http://127.0.0.1:5173/kanban/`.
 3. Mantenha confirmação de e-mail habilitada. Configure SMTP de produção para entrega de confirmação e recuperação de senha.
 4. Em uma instalação nova, o primeiro administrador cria e confirma a própria conta ou recebe um convite pelo painel Supabase. Um administrador do projeto executa `supabase/bootstrap-admin.sql`, substituindo somente o e-mail indicado. O convite abre a tela de definição de senha. Não envie senhas ou chaves secretas pelo chat nem as coloque no repositório.
@@ -49,7 +49,9 @@ O workflow `.github/workflows/pages.yml` executa testes, compila e publica cada 
 - Diferenças aparecem em amarelo. Histórico inclui autor, horário, dados, grades e versões anteriores, inclusive dos rascunhos.
 - Na produção física, para cada tamanho, `entrada = saída + refugos`. Consertos são um subconjunto da saída. A mesma peça pode ter retrabalho em etapas diferentes: o painel mostra **ocorrências**, não peças únicas em conserto.
 - Costura externa exige oficina e previsão, mostra uma tag e sinaliza atraso. Costura interna usa início/fim.
-- OP é única; finalização do PCP é registrada pelo servidor.
+- OP é única por origem; parcelas compartilham a OP com identificação própria. Finalização do PCP é registrada pelo servidor.
+- PCP desmembra OP após Costura, retorna etapas e exclui/restaura cards com motivo e histórico preservado.
+- Acabamento e Embalagem liberam parcelas independentemente, mantendo o saldo na origem. Consulte [regras, limitações e análise crítica das alterações](docs/ALTERACOES-2026-10.md).
 - Google Drive deliberadamente fora desta versão. Uma futura integração poderá anexar digitalizações sem mudar o banco principal.
 
 ## Verificação
