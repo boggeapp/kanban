@@ -175,3 +175,45 @@ test('operador correto libera parcelas e preserva início antigo já salvo em ra
  await as(admin);await db.query('select public.set_user_role($1,$2,$3)',[pending,'embalagem',true]);await as(pending);
  assert.equal((await partial(a,5)).stage,'concluido');
 });
+
+const erpPart=(op,n,reference='REF-NOVA',description='Modelo novo')=>({op_number:op,reference,description,grid:qty(n)});
+test('migração ERP preserva desmembramentos anteriores sem renomear ou redistribuir',async()=>{
+ await as(admin);const before=(await db.query('select to_jsonb(p) as data from public.plans p order by id')).rows;
+ await db.exec('reset role');await db.exec(await readFile(new URL('../supabase/migrations/202610020002_erp_split.sql',import.meta.url),'utf8'));
+ await as(admin);assert.deepEqual((await db.query('select to_jsonb(p) as data from public.plans p order by id')).rows,before);
+});
+test('ERP mantém saldo na OP atual e cria várias OPs com referências e descrições próprias',async()=>{
+ let p=await throughSewing();const original=p;
+ const children=(await split(p,[erpPart('ERP-100',30,'REF-100','Calça reta'),erpPart('ERP-200',20,'REF-200','Bermuda')])).rows;
+ assert.deepEqual(children.map(x=>[x.op_number,x.reference,x.description,x.current_grid['38']]),[['ERP-100','REF-100','Calça reta',30],['ERP-200','REF-200','Bermuda',20]]);
+ p=await fresh(p);assert.equal(p.current_grid['38'],48);assert.equal(p.op_number,original.op_number);assert.equal(p.reference,original.reference);assert.equal(p.description,original.description);assert.equal(p.split_at,null);assert.equal(p.stage,'lavanderia');assert.deepEqual(p.planned_grid,original.planned_grid);
+ assert.equal((await db.query('select count(*)::int as n from public.stage_records where plan_id=any($1::uuid[])',[children.map(c=>c.id)])).rows[0].n,0);
+ await assert.rejects(()=>split(original,[erpPart('ERP-STALE',1)]),/atualizado/);
+ const more=(await split(p,[erpPart(' ERP-300 ',10)])).rows[0];assert.equal(more.op_number,'ERP-300');p=await fresh(p);assert.equal(p.current_grid['38'],38);
+ await assert.rejects(()=>back(p,'costura'),/originou/);await assert.rejects(()=>exclude(p),/destinos/);
+ p=await stage(p,{send_date:day,expected_date:day,return_date:day});assert.equal(p.current_grid['38'],38);assert.equal(p.stage,'acabamento');
+ const parcel=await partial(p,10);assert.equal(parcel.stage,'embalagem');assert.equal((await fresh(p)).current_grid['38'],28);
+ let child=await stage(children[0],{send_date:day,expected_date:day,return_date:day});child=await back(child,'lavanderia');assert.equal(child.current_grid['38'],30);
+ child=await exclude(child);child=await exclude(child,false);assert.equal(child.current_grid['38'],30);
+});
+test('ERP rejeita números repetidos e entradas inválidas sem alterar saldo ou criar filhos',async()=>{
+ const p=await throughSewing();
+ await as(risk);await assert.rejects(()=>split(p,[erpPart('ERP-NO',1)]),/Apenas PCP/);await as(admin);
+ await assert.rejects(()=>split(p,[qty(30),qty(68)]),/op_number/); // old browser payload must not create suffixes
+ await assert.rejects(()=>split(p,[]),/1 a 100/);
+ await assert.rejects(()=>split(p,[erpPart('',10)]),/op_number/);
+ await assert.rejects(()=>split(p,[erpPart('ERP-X',10,'   ')]),/reference/);
+ await assert.rejects(()=>split(p,[erpPart('ERP-X',10,'R','x'.repeat(501))]),/description/);
+ await assert.rejects(()=>split(p,[erpPart('ERP-X',0)]),/ao menos/);
+ await assert.rejects(()=>split(p,[erpPart('ERP-X',98)]),/Mantenha/);
+ await assert.rejects(()=>split(p,[{...erpPart('ERP-X',1),grid:{...qty(1),'40':1}}]),/excedem/);
+ await assert.rejects(()=>split(p,[erpPart('ERP-X',99)]),/excedem/);
+ await assert.rejects(()=>split(p,[erpPart(p.op_number,1)]),/duplicate key/);
+ await assert.rejects(()=>split(p,[erpPart('ERP-DUP',10),erpPart(' ERP-DUP ',10)]),/duplicate key/);
+ await assert.rejects(()=>split(p,[erpPart('ERP-NEW',10),erpPart('ERP-100',10)]),/duplicate key/);
+ assert.equal((await db.query('select count(*)::int as n from public.plans where parent_id=$1',[p.id])).rows[0].n,0);assert.deepEqual(await fresh(p),p);
+ const [child]=(await split(p,[erpPart('ERP-VALID',10)])).rows;await exclude(child);
+ const other=await throughSewing();await assert.rejects(()=>split(other,[erpPart('ERP-VALID',10)]),/duplicate key/);
+ const draft=await stage(other,{send_date:day},other.current_grid,zero(),zero(),false);await assert.rejects(()=>split(draft,[erpPart('ERP-LATE',10)]),/posterior/);
+ await db.exec('reset role;set role anon');await assert.rejects(()=>split(p,[erpPart('ERP-ANON',1)]),/permission denied/);
+});

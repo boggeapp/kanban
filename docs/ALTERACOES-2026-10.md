@@ -2,7 +2,11 @@
 
 ## Comportamento
 
-**Desmembrar OP:** o PCP abre um card cuja Costura terminou, antes de iniciar a Lavanderia, e distribui integralmente a grade entre 2 a 26 OPs: `123-A`, `123-B` até `123-Z`. Cada parte deve ter peças e a soma deve coincidir em **cada tamanho**. O card original vira um registro de origem, consultável em **Cards distribuídos**; seus refugos anteriores continuam contabilizados uma única vez. As novas OPs seguem independentemente pela Lavanderia. Uma OP derivada não pode ser desmembrada novamente.
+**Desmembrar OP:** o PCP abre um card cuja Costura terminou, antes de iniciar a Lavanderia. Informa quantas novas OPs deseja criar e, para cada uma, o **número criado no ERP**, a **referência**, a **descrição** e a grade por tamanho. Referência e descrição vêm preenchidas com os dados atuais e podem ser alteradas. Não há geração automática de sufixos A/B/C nem integração de criação no ERP.
+
+A OP original mantém seu número, referência, descrição e histórico, e continua ativa na Lavanderia com o saldo restante. Cada nova OP deve receber peças; a OP original deve manter ao menos uma peça. Em cada tamanho, `saldo anterior = saldo da OP atual + soma das novas OPs`. Exemplo: OP 123 com 100 peças → 40 permanecem na OP 123, 35 vão para OP 900 e 25 para OP 901. Números informados não podem repetir a OP atual, outra nova OP ou uma OP já existente, inclusive excluída.
+
+É possível criar de 1 a 100 novas OPs por operação e repetir o desmembramento da OP original enquanto a Lavanderia não tiver sido iniciada. OPs derivadas não podem ser desmembradas novamente. Histórico e refugos anteriores não são copiados aos filhos, evitando duplicação. Desmembramentos da versão anterior permanecem intactos: a atualização não renomeia OPs nem redistribui peças já registradas.
 
 **Liberar parcela pronta:** em Acabamento ou Embalagem, o operador autorizado informa a grade pronta, refugos, consertos e datas da parcela. A parcela avança em um novo card; o saldo permanece na etapa. As parcelas mantêm a OP e recebem identificadores `1`, `2` etc.; uma parcela novamente fracionada recebe `1.1`, `1.2` etc. Cada card tem também seu número Bogge único. Para cada tamanho:
 
@@ -18,7 +22,7 @@ Consertos pertencem às peças prontas, nunca são outra baixa. Exemplo: de 100 
 
 | Risco | Proteção adotada | Limite operacional |
 | --- | --- | --- |
-| Somar a origem e seus destinos como peças ativas | Origem distribuída fica fora dos totais e do quadro padrão | Cards distribuídos exibem quantidades históricas, não estoque atual |
+| Somar a origem e seus destinos como peças ativas | No desmembramento ERP, origem conserva somente o saldo; containers antigos e totalmente distribuídos ficam fora do quadro padrão | Cards distribuídos exibem quantidades históricas, não estoque atual |
 | Baixar o mesmo refugo várias vezes | Registros anteriores não são copiados aos filhos; parcelas consomem apenas seu saldo | Indicador de consertos continua medindo ocorrências, não peças distintas |
 | Voltar etapa e recriar peças já enviadas | Retorno bloqueado na origem com filhos; piso de retorno por lote | Não há junção automática de OPs/parcelas |
 | Apagar histórico ao corrigir uma etapa | Arquivo imutável da linha original e evento com autor/motivo | Totais operacionais refletem a versão vigente, não a soma de todas as versões |
@@ -28,14 +32,14 @@ Consertos pertencem às peças prontas, nunca são outra baixa. Exemplo: de 100 
 | Burlar permissões pelo navegador | RLS, tabelas somente leitura para clientes, RPCs com validação de perfil | Chave pública continua sem acesso administrativo |
 | Editar planejamento depois de retorno ao Risco | Bloqueio quando há registros arquivados ou origem derivada | Planejamento original permanece auditável |
 | Comparar um lote pequeno com o corte inteiro | Grade do lote como entrada; link explícito para origem e corte original | Não rateia o corte original artificialmente entre lotes |
-| Migração danificar produção existente | Novas colunas/tabela e wrappers das funções validadas; sem regravar grades existentes | Precisa aplicar a migração uma única vez |
+| Migração danificar produção existente | Migrações incrementais; a revisão ERP substitui apenas a função de desmembramento, sem regravar cards existentes | Precisa aplicar a migração uma única vez |
 
 O fluxo anterior, autenticação, criação de usuários, 19 tamanhos, destaques amarelos, costura externa, rascunhos e validação de campos continuam usando os mesmos mecanismos. Google Drive continua fora do escopo. O banco mantém as versões anteriores das funções **privadas**, sem permissão de execução para clientes, para reutilizar a lógica validada sem permitir bypass.
 
 ## Implantação e recuperação
 
 1. Executar testes e build. Publicar o frontend; ele reconhece a presença das colunas novas e não mostra operações novas antes da migração.
-2. Em projeto existente, executar apenas `supabase/migrations/202610020001_production_lots.sql` no SQL Editor do projeto correto. **Não repetir a migração inicial.** A nova migração é transacional e preserva cards existentes.
+2. Aplicar as migrações pendentes na ordem: `202610020001_production_lots.sql` e depois `202610020002_erp_split.sql`. Se a primeira já foi aplicada, executar **somente a segunda**. Não repetir a migração inicial. A revisão ERP altera a função, preservando integralmente cards e históricos existentes. Frontends antigos que enviam somente grades são rejeitados: precisam recarregar para informar os números do ERP.
 3. Conferir colunas, funções, RLS e contagens antes/depois. Recarregar abas do sistema para carregar a versão publicada.
 4. Se uma operação falhar, a transação reverte todos os seus efeitos. Não reaplicar migração já concluída. Não remover colunas/funções para tentar desfazer uma operação real. Usar restauração/retorno quando permitidos, mantendo o histórico.
 
